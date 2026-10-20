@@ -1,0 +1,52 @@
+#!/bin/bash
+set -eu
+umask 077
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y git python3-venv python3-pip python3-dev build-essential libpq-dev postgresql curl ec2-instance-connect
+# Descargar el proyecto desde la rama por defecto del repositorio Git.
+git clone https://github.com/GBAC22/control-asistencia-backend.git /opt/backend
+systemctl enable --now postgresql
+sudo -u postgres psql -v ON_ERROR_STOP=1 -c "CREATE USER asistencia WITH PASSWORD '${db_password}';"
+sudo -u postgres psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE control_asistencia OWNER asistencia;"
+PRIVATE_IP=$(hostname -I | awk '{print $1}')
+cat > /opt/backend/.env <<ENV
+DJANGO_SECRET_KEY=${django_secret}
+DJANGO_DEBUG=false
+DJANGO_ALLOWED_HOSTS=$PRIVATE_IP,localhost,127.0.0.1,${frontend_ip},${domain}
+POSTGRES_DB=control_asistencia
+POSTGRES_USER=asistencia
+POSTGRES_PASSWORD=${db_password}
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+TIME_ZONE=America/La_Paz
+CORS_ALLOWED_ORIGINS=https://${domain}
+CSRF_TRUSTED_ORIGINS=https://${domain}
+SECURE_SSL_REDIRECT=false
+SECURE_HSTS_SECONDS=0
+ENV
+useradd --system --home /opt/backend --shell /usr/sbin/nologin asistencia
+chown -R asistencia:asistencia /opt/backend
+cd /opt/backend
+sudo -u asistencia python3 -m venv venv
+sudo -u asistencia ./venv/bin/pip install -r requirements.txt gunicorn
+sudo -u asistencia ./venv/bin/python manage.py migrate
+cat > /etc/systemd/system/django.service <<'SVC'
+[Unit]
+Description=Control asistencia Django Gunicorn
+After=network-online.target postgresql.service
+Wants=network-online.target
+[Service]
+User=asistencia
+Group=asistencia
+WorkingDirectory=/opt/backend
+ExecStart=/opt/backend/venv/bin/gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --access-logfile - --error-logfile -
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=multi-user.target
+SVC
+systemctl daemon-reload
+systemctl enable --now django
+curl --retry 12 --retry-delay 5 --retry-connrefused --fail http://127.0.0.1:8000/api/health
+touch /var/lib/asistencia-ready

@@ -1,0 +1,6 @@
+name: control-asistencia-vm
+runtime:
+  name: python
+  options:
+    virtualenv: .venv
+description: EC2 independiente para laboratorio AWS

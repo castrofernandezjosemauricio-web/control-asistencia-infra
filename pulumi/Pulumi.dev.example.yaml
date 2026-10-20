@@ -1,0 +1,3 @@
+config:
+  aws:region: us-east-1
+  control-asistencia-vm:instanceType: t3.micro
