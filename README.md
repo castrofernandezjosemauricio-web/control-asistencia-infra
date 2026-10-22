@@ -1,177 +1,236 @@
-# Control de asistencia: despliegue nuevo en AWS
+![Terrascan](https://raw.githubusercontent.com/tenable/runterrascan.io/main/static/images/TerrascanTM_BY_Logo.png)
 
-Dos EC2: Django/PostgreSQL en backend y Angular/Nginx en frontend.
-CloudFront ofrece HTTPS. Nginx publica Angular y reenvia /api al backend.
-Cada EC2 clona su proyecto desde GitHub durante el primer arranque:
-- Backend: https://github.com/GBAC22/control-asistencia-backend.git
-- Frontend: https://github.com/GBAC22/control-asistencia-frontend.git
+[![GitHub release](https://img.shields.io/github/release/tenable/terrascan)](https://github.com/tenable/terrascan/releases/latest)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202-blue)](https://github.com/tenable/terrascan/blob/master/LICENSE)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/tenable/terrascan/pulls)
+![CI](https://github.com/tenable/terrascan/workflows/build/badge.svg)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=tenable_terrascan&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=tenable_terrascan)
+[![AUR package](https://repology.org/badge/version-for-repo/aur/terrascan.svg)](https://repology.org/project/terrascan/versions)
+[![codecov](https://codecov.io/gh/tenable/terrascan/branch/master/graph/badge.svg)](https://codecov.io/gh/tenable/terrascan)
+[![Documentation Status](https://readthedocs.com/projects/tenable-terrascan/badge/?version=latest)](https://runterrascan.io/)
+[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-v2.0%20adopted-ff69b4.svg)](code_of_conduct.md)
+![GitHub all releases](https://img.shields.io/github/downloads/tenable/terrascan/total)
 
-Subir los cambios de las aplicaciones a Git antes de desplegar. Los cambios
-que solo existen en las carpetas locales no se instalan en AWS. Los repositorios
-deben permitir clonacion HTTPS sin credenciales (repositorios publicos).
-Si son privados, configurar autenticacion de despliegue antes de aplicar;
-no poner tokens personales dentro de user_data.
+## Introduction
 
-## Organizacion
+Terrascan is a static code analyzer for Infrastructure as Code. Terrascan allows you to:
 
-- versions.tf y providers.tf: herramientas y region AWS.
-- variables.tf: nombre del despliegue, AMI fija, tipo EC2 y acceso SSH.
-- network.tf: VPC, subred publica, Internet Gateway y rutas.
-- security.tf: grupos separados; Django 8000 solo desde frontend.
-- compute.tf y templates/: servidores, instalacion y servicios.
-- secrets.tf: contrasenas aleatorias nuevas; no se muestran en outputs.
-- ip.tf y cdn.tf: IP elastica y CloudFront HTTPS.
-- backend.tf: backend S3; backend-nuevo.hcl selecciona el estado nuevo.
-- outputs.tf: identificadores y direcciones de acceso.
-- pulumi/: laboratorio independiente; Terraform no administra esos recursos.
+- Seamlessly scan infrastructure as code for misconfigurations.
+- Monitor provisioned cloud infrastructure for configuration changes that introduce posture drift, and enables reverting to a secure posture.
+- Detect security vulnerabilities and compliance violations.
+- Mitigate risks before provisioning cloud native infrastructure.
+- Offers flexibility to run locally or integrate with your CI\CD.
 
-## Estado nuevo: no migrar el estado parcial anterior
 
-El bucket de estado existente se conserva. La nueva clave es:
-control-asistencia/nuevo/terraform.tfstate
 
-El estado parcial anterior sigue en control-asistencia/dev/terraform.tfstate.
-No usar terraform init -migrate-state: copiaria las importaciones anteriores.
-No usar terraform destroy con el backend anterior durante esta preparacion.
-No eliminar el bucket de estado: tambien contiene el estado de Pulumi.
-No subir estado, credenciales, .terraform, .build o planes a Git.
+### Resources
+* To try Terrascan in your browser, see the Terrascan Sandbox https://www.tenable.com/terrascan
 
-## Preparacion y despliegue (PowerShell)
+* To learn more about Terrascan's features and capabilities, see the documentation portal: https://runterrascan.io
 
-Desde control-asistencia-infra, con Terraform 1.10+ disponible:
+<p align="center">
+    Join Tenable community 👇
+<br/>
+<a href="https://discord.gg/ScUPMzyG3n">
+    <img src="http://fig.io/icons/discord-logo-square.png" width="80px" height="80px" />
+</a>
+</p>
 
-```powershell
-$env:PATH = "C:\Program Files\Amazon\AWSCLIV2;$env:PATH"
-$env:AWS_PROFILE = 'terraform'
-$env:AWS_SDK_LOAD_CONFIG = '1'
-aws.exe sts get-caller-identity
-terraform init -reconfigure "-backend-config=backend-nuevo.hcl" "-backend-config=profile=terraform"
-terraform state list
-terraform validate
-terraform plan -lock-timeout=5m -out=tfplan
+
+## Key features
+* 500+ Policies for security best practices
+* Scanning of [Terraform](https://runterrascan.io/docs/usage/command_line_mode/#scanning-current-directory-containing-terraform-files-for-aws-resources) (HCL2)
+* Scanning of AWS CloudFormation Templates (CFT)
+* * Scanning of Azure Resource Manager (ARM)
+* Scanning of [Kubernetes](https://runterrascan.io/docs/usage/command_line_mode/#scanning-for-a-specific-iac-provider) (JSON/YAML), [Helm](https://runterrascan.io/docs/usage/command_line_mode/#scanning-a-helm-chart) v3, and [Kustomize](https://runterrascan.io/docs/usage/command_line_mode/#scanning-a-kustomize-chart)
+* Scanning of [Dockerfiles](https://runterrascan.io/docs/usage/command_line_mode/#scanning-a-dockerfile)
+* Support for [AWS](https://runterrascan.io/docs/policies/aws/), [Azure](https://runterrascan.io/docs/policies/azure/), [GCP](https://runterrascan.io/docs/policies/gcp/), [Kubernetes](https://runterrascan.io/docs/policies/k8s/), [Dockerfile](https://runterrascan.io/docs/policies/docker/), and [GitHub](https://runterrascan.io/docs/policies/github/)
+* Integrates with docker image vulnerability scanning for AWS, Azure, GCP, Harbor container registries.
+
+## Quick Start
+
+1. [Install](#install)
+2. [Scan](#scan)
+3. [Integrate](#integrate)
+
+### Step 1: Install
+Terrascan supports multiple ways to install and is also available as a Docker image.
+See Terrascan's [releases](https://github.com/tenable/terrascan/releases) page for the latest version of builds in all supported platforms. Select the correct binary for your platform.
+
+#### Install as a native executable
+
+```sh
+$ curl -L "$(curl -s https://api.github.com/repos/tenable/terrascan/releases/latest | grep -o -E "https://.+?_Darwin_x86_64.tar.gz")" > terrascan.tar.gz
+$ tar -xf terrascan.tar.gz terrascan && rm terrascan.tar.gz
+$ install terrascan /usr/local/bin && rm terrascan
+$ terrascan
 ```
 
-En el primer despliegue, state list debe estar vacio (o informar que aun no
-existe estado). Si aparecen recursos importados, detenerse: es el backend viejo.
-Si el estado nuevo ya fue utilizado, no repetir la expectativa de estado vacio.
+#### Install on ArchLinux / Manjaro via `AUR`
 
-El plan inicial debe crear exactamente dos EC2 y los recursos auxiliares nuevos,
-sin destruir ni reemplazar infraestructura anterior. Revisarlo antes de aplicar:
+ArchLinux and Manjaro users can install by:
 
-```powershell
-terraform apply -lock-timeout=5m tfplan
-terraform output
+```
+yay -S terrascan
 ```
 
-Terraform no espera que cloud-init termine de instalar Django/Angular. La
-instalacion puede tardar varios minutos incluso despues del apply. CloudFront
-espera su despliegue, pero eso tampoco verifica la salud de las aplicaciones.
-Acceder por url_sistema HTTPS: las cookies de Django son seguras y requieren HTTPS.
-Probar tambien url_health; debe responder correctamente antes de probar login.
+#### Install via `brew`
 
-## Diagnostico y primer administrador
+[Homebrew](https://brew.sh/) users can install by:
 
-EC2 -> instancia -> Conectar -> EC2 Instance Connect -> usuario ubuntu.
-La AMI Ubuntu tiene que admitir EC2 Instance Connect; las plantillas tambien lo
-instalan. El CIDR SSH por defecto corresponde al servicio en us-east-1; verificar
-la lista de IP vigente de AWS si la conexion falla. No se necesita la llave vieja.
-
-En cada servidor:
-
-```bash
-sudo cloud-init status --wait
-sudo tail -n 80 /var/log/cloud-init-output.log
-sudo test -f /var/lib/asistencia-ready && echo LISTO
+```sh
+$ brew install terrascan
 ```
 
-Backend:
+#### Docker image
 
-```bash
-systemctl is-active django postgresql
-curl -f http://127.0.0.1:8000/api/health
-sudo -u asistencia /opt/backend/venv/bin/python /opt/backend/manage.py seed_admin --nombre "Administrador" --correo "admin@example.test"
+Terrascan is also available as a Docker image and can be used as follows
+
+```sh
+$ docker run tenable/terrascan
+```
+Refer to [documentation](https://runterrascan.io/docs/getting-started/) for information.
+
+### Step 2: Scan
+To scan your code for security issues you can run the following (defaults to scanning Terraform).
+
+```sh
+$ terrascan scan
+```
+**Note**: Terrascan will exit with an error code if any errors or violations are found during a scan.
+
+#### List of possible Exit Codes
+| Scenario      | Exit Code |
+| ----------- | ----------- |
+| scan summary has errors and violations | 5 |
+| scan summary has errors but no violations | 4 |
+| scan summary has violations but no errors | 3 |
+| scan summary has no violations or errors | 0 |
+| scan command errors out due to invalid inputs | 1 |
+### Step 3: Integrate with CI\CD
+
+Terrascan can be integrated into CI/CD pipelines to enforce security best practices.
+Please refer to our [documentation to integrate with your pipeline](https://runterrascan.io/docs/integrations/).
+
+## Terrascan Commands
+You can use the `terrascan` command with the following options:
+
+```sh
+$ terrascan
+Terrascan
+
+Usage:
+  terrascan [command]
+
+Available Commands:
+  help        Help about any command
+  init        Initialize Terrascan
+  scan        Detect compliance and security violations across Infrastructure as Code.
+  server      Run Terrascan as an API server
+  version     Terrascan version
+
+Flags:
+  -c, --config-path string   config file path
+  -h, --help                 help for terrascan
+  -l, --log-level string     log level (debug, info, warn, error, panic, fatal) (default "info")
+  -x, --log-type string      log output type (console, json) (default "console")
+  -o, --output string        output type (human, json, yaml, xml) (default "human")
+
+Use "terrascan [command] --help" for more information about a command.
 ```
 
-seed_admin solicita la contrasena de forma interactiva. No hay un administrador
-precargado. Los datos de alumnos y horarios se cargan desde la aplicacion.
+## Policies
+Terrascan policies are written using the [Rego policy language](https://www.openpolicyagent.org/docs/latest/policy-language/). Every rego includes a JSON "rule" file which defines metadata for the policy.
+By default, Terrascan downloads policies from Terrascan repositories while scanning for the first time. However, if you want to download the latest policies, you need to run the Initialization process. See [Usage](https://runterrascan.io/docs/usage/command_line_mode/) for information about the Initialization process.
 
-Frontend:
+Note: The scan command will implicitly run the initialization process if there are no policies found.
 
-```bash
-sudo nginx -t
-systemctl is-active nginx
+## Docker Image Vulnerabilities
+You can use the `--find-vuln` flag to collect vulnerabilities as reported in its registry as part of Terrascan's output. Currently Terrascan supports Elastic Container Registry (ECR), Azure Container Registry, Google Container Registry, and Google Artifact Registry.
+
+The `--find-vuln` flag can be used when scanning IaC files as follows:
+
+```
+$ terrascan scan -i <IaC provider> --find-vuln
 ```
 
-No mostrar .env ni user_data durante una defensa: contienen secretos. No se usa
-set -x en el arranque. Los secretos generados siguen presentes en el estado y en
-user_data; el acceso IAM a ambos debe permanecer restringido.
+For more information and explanation of how to setup your environment to authenticate with the registry's APIs see the [usage](https://runterrascan.io/docs/usage/command_line_mode/) documentation.
 
-## Trabajo de dos personas
+## Customizing scans
 
-Los dos equipos necesitan el mismo codigo de infraestructura, misma cuenta AWS, region, stack default y clave S3 nueva.
-Cada persona usa sus propias credenciales autorizadas. La identidad root de la
-sesion actual debe sustituirse por una identidad de trabajo antes del uso habitual.
+By default, Terrascan scans your entire configuration against all policies. However, Terrascan supports granular configuration of policies and resources.
 
-1. A agrega una etiqueta DefensaA = "ok" en tags de la EC2 backend. Comparte el
-   commit, genera el plan y aplica. No modificar user_data para esta demostracion.
-2. B sincroniza Git, conserva DefensaA, agrega DefensaB = "ok" al frontend,
-   genera un plan nuevo y aplica. Mostrar ambas etiquetas en AWS.
-3. Ambos equipos usan el mismo commit del repositorio de infraestructura.
-4. Para demostrar bloqueo, A deja apply esperando confirmacion; B ejecuta plan
-   con -lock-timeout=15s. B debe esperar o fallar mientras A conserva el bloqueo.
+Read more about [in-file instrumentation](https://runterrascan.io/docs/usage/in-file_instrumentation/) and [the config file](https://runterrascan.io/docs/usage/config_options/) on our documentation site.
 
-No usar -lock=false ni force-unlock sobre una ejecucion activa. Un plan guardado
-puede quedar obsoleto si otro aplica; generar uno nuevo despues de sincronizar.
-El bloqueo evita escrituras simultaneas, pero no combina versiones del codigo.
+For now, some quick tips:
 
-## Actualizaciones desde Git
+- [Exclude a particular policy for a specific resource.](#How_to_exclude_a_policy_while_scanning_a_resource)
+- [Manually configure policies to be suppressed or applied globally from a scan across all resources or, for just a particular resource.](#_How_to_include_or_exclude_specific_policies_or_resources_from_being_scanned)
 
-Terraform crea y configura los servidores; no hace git pull automaticamente
-cuando se sube un commit de la aplicacion. Para actualizar un servidor existente,
-conectarse por EC2 Instance Connect y actualizar el repositorio:
+### How to exclude a policy while scanning a resource
 
-Backend (hacer respaldo de datos antes de migraciones):
+You can configure Terrascan to skip a particular policy (rule) while scanning a resource. Follow these steps depending on your platform:
 
-```bash
-sudo -u asistencia git -C /opt/backend pull --ff-only
-sudo -u asistencia /opt/backend/venv/bin/pip install -r /opt/backend/requirements.txt gunicorn
-sudo -u asistencia /opt/backend/venv/bin/python /opt/backend/manage.py migrate
-sudo systemctl restart django
+#### Terraform
+Use Terraform scripts to configure Terrascan to skip rules by inserting a comment with the phrase `"ts:skip=<RULENAME><SKIP_REASON>"`. The comment should be included inside the resource as shown in the example below.
+
+![tf](docs/img/tf_skip_rule.png)
+
+#### Kubernetes
+In Kubernetes yamls, you can configure Terrascan to skip policies by adding an annotation as seen in the snippet below.
+
+![k8s](docs/img/skiprules.png)
+
+### How to include or exclude specific policies or resources from being scanned
+
+Use the Terrascan config file to manually select the policies which should be included or excluded from the entire scan. This is suitable for edge use cases.
+Use the "in-file" suppression option to specify resources that should be excluded from being tested against selected policies. This ensures that the policies are skipped only for particular resources, rather than all of the resources.
+
+![config](https://user-images.githubusercontent.com/74685902/105115887-83e2f380-5a7e-11eb-82b8-a1d18c83a405.png)
+
+### Sample scan output
+
+Terrascan's default output is a list of violations present in the scanned IaC. A sample output:
+
+![Screenshot 2021-01-19 at 10 52 47 PM](https://user-images.githubusercontent.com/74685902/105115731-32d2ff80-5a7e-11eb-93b0-2f0620eb1295.png)
+
+## Building Terrascan
+Terrascan can be built locally. This is helpful if you want to be on the latest version or when developing Terrascan. [gcc](https://gcc.gnu.org/install/) and [Go](https://go.dev/doc/install) 1.19 or above are required.
+
+```sh
+$ git clone git@github.com:tenable/terrascan.git
+$ cd terrascan
+$ make build
+$ ./bin/terrascan
 ```
 
-Frontend:
+### To build your own docker, refer to this example (Alpine Linux):
+```
+FROM golang:alpine AS build-env
 
-```bash
-cd /opt/frontend
-sudo git pull --ff-only
-sudo npm ci
-sudo npm run build
-sudo cp -r dist/control-asistencia-web/browser/. /var/www/html/
-sudo nginx -t
-sudo systemctl reload nginx
+RUN apk add --update git
+
+RUN git clone https://github.com/tenable/terrascan && cd terrascan \
+  && CGO_ENABLED=0 GO111MODULE=on go build -o /go/bin/terrascan cmd/terrascan/main.go
+
 ```
 
-No modificar en AWS los archivos versionados: los cambios se hacen en Git.
-CloudFront tiene cache deshabilitada en esta configuracion.
+## Developing Terrascan
+To learn more about developing and contributing to Terrascan, refer to the [contributing guide](CONTRIBUTING.md).
 
-## Limites del laboratorio
+## Code of Conduct
+We believe having an open and inclusive community benefits all of us. Please note that this project is released with a [Contributor Code of Conduct](code_of_conduct.md). By participating in this project you agree to abide by its terms.
 
-Backend en subred publica, con acceso a Django restringido por security group;
-PostgreSQL local y discos cifrados, sin alta disponibilidad ni respaldos automaticos.
-Las EC2 no necesitan credenciales AWS para clonar los repositorios publicos.
-Cambiar user_data reemplaza la EC2 correspondiente; reemplazar backend
-pierde los datos locales si no se hace respaldo. AMI fija evita cambios accidentales
-por most_recent; antes del primer plan comprobar que siga disponible en la region.
+## License
 
-## Limpieza
+Terrascan is licensed under the [Apache 2.0 License](LICENSE).
 
-Las instancias viejas y los recursos anteriores se retiran por separado; no estan
-administrados por el estado nuevo. Revisar discos, EIP y CloudFront antiguos.
-Para el laboratorio Pulumi, preferir pulumi destroy desde pulumi/ para actualizar
-su estado. No borrar estados como mecanismo de limpieza de recursos.
-El bucket de estado existente no pertenece al ciclo de destruccion del despliegue.
+### Stargazers
 
-## Validacion local
+[![Stargazers @tenable/terrascan](https://reporoster.com/stars/tenable/terrascan)](https://github.com/tenable/terrascan/stargazers)
 
-Se verifico sintaxis Bash de las plantillas y Terraform validate. El plan con AWS, apply, salud HTTPS y autenticacion quedan pendientes
-hasta ejecutar los pasos de despliegue en la terminal con acceso AWS.
+### Forkers
+
+[![Forkers @tenable/terrascan](https://reporoster.com/forks/tenable/terrascan)](https://github.com/tenable/terrascan/network/members)
+
+####
