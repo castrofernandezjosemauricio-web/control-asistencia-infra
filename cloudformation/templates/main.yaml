@@ -1,0 +1,407 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Control de asistencia - EC2 backend/frontend, PostgreSQL local y CloudFront HTTPS.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: asistencia-lab3-cfn
+    AllowedPattern: '^[a-z][a-z0-9-]{2,30}$'
+    ConstraintDescription: Use 3-31 letras minusculas, numeros o guiones; empezar por letra.
+  InstanceType:
+    Type: String
+    Default: t3.small
+    AllowedValues:
+      - t3.micro
+      - t3.small
+      - t3.medium
+  SshCidr:
+    Type: String
+    Default: 18.206.107.24/29
+    AllowedPattern: '^([0-9]{1,3}\.){3}[0-9]{1,3}/(2[7-9]|3[0-2])$'
+    ConstraintDescription: Especifica un CIDR IPv4 limitado entre /27 y /32 para EC2 Instance Connect.
+  AmiId:
+    Type: AWS::EC2::Image::Id
+    Default: ami-02a9cdd4e98bc3c78
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.30.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-vpc'
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  VpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.30.1.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-public'
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  FrontendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: HTTP publico y EC2 Instance Connect restringido.
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - Description: HTTP servido a CloudFront.
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - Description: EC2 Instance Connect restringido al CIDR indicado.
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SshCidr
+      SecurityGroupEgress:
+        - Description: HTTP para descargar paquetes y recursos durante bootstrap.
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - Description: HTTPS para AWS APIs, GitHub, npm y repositorios de paquetes.
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-frontend'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  BackendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Django solo desde frontend; SSH restringido.
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - Description: Django desde el frontend.
+          IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          SourceSecurityGroupId: !Ref FrontendSecurityGroup
+        - Description: EC2 Instance Connect restringido al CIDR indicado.
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SshCidr
+      SecurityGroupEgress:
+        - Description: HTTP para descargar paquetes y recursos durante bootstrap.
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - Description: HTTPS para AWS APIs, GitHub y repositorios de paquetes.
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-backend'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  DatabaseSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: PostgreSQL password for the attendance backend.
+      GenerateSecretString:
+        PasswordLength: 24
+        ExcludePunctuation: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  DjangoSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: Django secret key for the attendance backend.
+      GenerateSecretString:
+        PasswordLength: 50
+        ExcludePunctuation: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  BackendInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: ReadAppSecretsAndSignalStack
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref DatabaseSecret
+                  - !Ref DjangoSecret
+              - Effect: Allow
+                Action:
+                  - cloudformation:SignalResource
+                Resource: !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*'
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  BackendInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref BackendInstanceRole
+
+  FrontendInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: SignalStackResource
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:SignalResource
+                Resource: !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*'
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  FrontendInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref FrontendInstanceRole
+
+  FrontendEip:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-eip'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  BackendInstance:
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - PublicSubnetRouteTableAssociation
+      - VpcGatewayAttachment
+    CreationPolicy:
+      ResourceSignal:
+        Count: 1
+        Timeout: PT45M
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref BackendInstanceProfile
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref BackendSecurityGroup
+      MetadataOptions:
+        HttpTokens: required
+        HttpEndpoint: enabled
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 16
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64:
+          Fn::Sub:
+            - |
+              __BACKEND_USERDATA__
+            - DatabaseSecretArn: !Ref DatabaseSecret
+              DjangoSecretArn: !Ref DjangoSecret
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-backend'
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  FrontendInstance:
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - PublicSubnetRouteTableAssociation
+      - VpcGatewayAttachment
+    CreationPolicy:
+      ResourceSignal:
+        Count: 1
+        Timeout: PT45M
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref FrontendInstanceProfile
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref FrontendSecurityGroup
+      MetadataOptions:
+        HttpTokens: required
+        HttpEndpoint: enabled
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 16
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64:
+          Fn::Sub:
+            - |
+              __FRONTEND_USERDATA__
+            - BackendPrivateIp: !GetAtt BackendInstance.PrivateIp
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-frontend'
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  FrontendEipAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt FrontendEip.AllocationId
+      InstanceId: !Ref FrontendInstance
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    DependsOn: FrontendEipAssociation
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub '${ProjectName} attendance system'
+        HttpVersion: http2
+        Origins:
+          - Id: frontend
+            DomainName: !GetAtt FrontendInstance.PublicDnsName
+            CustomOriginConfig:
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginProtocolPolicy: http-only
+              OriginSSLProtocols:
+                - TLSv1.2
+        DefaultCacheBehavior:
+          TargetOriginId: frontend
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - POST
+            - PATCH
+            - DELETE
+          CachedMethods:
+            - GET
+            - HEAD
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
+        Restrictions:
+          GeoRestriction:
+            RestrictionType: none
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+Outputs:
+  IpBackend:
+    Description: Public IP of the backend instance.
+    Value: !GetAtt BackendInstance.PublicIp
+  IpFrontend:
+    Description: Elastic IP of the frontend instance.
+    Value: !Ref FrontendEip
+  BackendId:
+    Description: Backend EC2 instance ID.
+    Value: !Ref BackendInstance
+  FrontendId:
+    Description: Frontend EC2 instance ID.
+    Value: !Ref FrontendInstance
+  UrlSistema:
+    Description: HTTPS URL of the attendance system.
+    Value: !Sub 'https://${CloudFrontDistribution.DomainName}'
+  UrlHealth:
+    Description: HTTPS health endpoint.
+    Value: !Sub 'https://${CloudFrontDistribution.DomainName}/api/health'

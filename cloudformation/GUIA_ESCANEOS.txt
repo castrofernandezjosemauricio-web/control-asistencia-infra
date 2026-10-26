@@ -1,0 +1,166 @@
+GUIA LOCAL: ESCANEAR EL TEMPLATE DE CLOUDFORMATION
+=================================================
+
+Objetivo
+--------
+Ejecutar los escaneos desde Windows/PowerShell y ver los resultados en la
+terminal. Estos pasos NO despliegan recursos en AWS y NO requieren credenciales
+AWS.
+
+La plantilla principal contiene marcadores para insertar los scripts de
+arranque. Por eso, los escáneres deben apuntar al archivo renderizado, no al
+archivo templates\main.yaml directamente.
+
+
+1. Abrir PowerShell en la raiz del repositorio
+----------------------------------------------
+
+La raiz es la carpeta que contiene README.md y la carpeta cloudformation.
+Confirma la ubicacion:
+
+    Get-Location
+    Test-Path .\cloudformation\templates\main.yaml
+
+El segundo comando debe responder True.
+
+
+2. Instalar herramientas (solo la primera vez)
+----------------------------------------------
+
+Instala Trivy:
+
+    winget install --id AquaSecurity.Trivy --exact --source winget
+
+Instala Checkov, cfn-lint y las dependencias de las pruebas locales:
+
+    python -m pip install -r cloudformation\tests\requirements.txt
+
+Si acabas de instalar Trivy y PowerShell no lo reconoce, cierra y vuelve a
+abrir PowerShell. Comprueba que ambas herramientas esten disponibles:
+
+    trivy --version
+    checkov --version
+    cfn-lint --version
+
+
+3. Renderizar la plantilla para analizarla
+------------------------------------------
+
+Renderiza main.yaml y los dos scripts userdata/*.sh en un archivo temporal:
+
+    $template = Join-Path $env:TEMP "control-asistencia-main-rendered.yaml"
+    .\cloudformation\scripts\render-template.ps1 -OutputPath $template
+    Test-Path $template
+
+El ultimo comando debe responder True. El archivo se guarda fuera del
+repositorio, en la carpeta temporal de Windows.
+
+
+4. Escaneo con Trivy
+--------------------
+
+Ejecuta:
+
+    trivy config --format table --severity HIGH,CRITICAL --exit-code 0 $template
+
+Que hace:
+- Analiza configuraciones de infraestructura como codigo.
+- Busca configuraciones inseguras en CloudFormation.
+- Muestra severidad, regla, recurso y recomendaciones.
+- Este comando filtra HIGH y CRITICAL.
+- --exit-code 0 hace que Trivy muestre todos los resultados sin detener la
+  secuencia por encontrar hallazgos. No convierte los hallazgos en seguros.
+
+En la salida revisa "Report Summary", el numero de configuraciones detectadas,
+las reglas y las ubicaciones de la plantilla. La tabla final presenta los
+hallazgos que la herramienta detecto; estudia cada recomendacion.
+
+
+5. Escaneo con Checkov
+----------------------
+
+Ejecuta:
+
+    checkov --framework cloudformation --file $template --compact --soft-fail
+
+Que hace:
+- Analiza el template usando las politicas de seguridad de Checkov para
+  CloudFormation.
+- Reporta verificaciones aprobadas y fallidas por recurso.
+- --soft-fail permite terminar el comando y mostrar el reporte aunque encuentre
+  verificaciones fallidas. No elimina ni corrige los hallazgos.
+
+Busca el resumen "Passed checks", "Failed checks" y cada entrada "FAILED".
+Lee el nombre de la regla, el recurso afectado y la guia que acompana el
+reporte. Una verificacion fallida debe revisarse; no significa por si sola que
+el stack ya haya sido atacado.
+
+Si PowerShell no encuentra el comando, cierra y vuelve a abrir la terminal
+despues de instalar las dependencias Python. Confirma con:
+
+    Get-Command checkov
+
+
+6. Validacion adicional del template con cfn-lint
+------------------------------------------------
+
+Este paso revisa sintaxis, propiedades y tipos de recursos de CloudFormation.
+Es un linter/validador del template; no sustituye los escaneos de seguridad
+Trivy ni Checkov.
+
+    cfn-lint $template
+
+Sin mensajes de error normalmente indica que cfn-lint no encontro errores en
+el template renderizado.
+
+
+7. Ejecutar los tres tests de seguridad del proyecto (opcional/complementario)
+------------------------------------------------------------------------------
+
+Los tests propios complementan los escaneres, pero NO son Trivy ni Checkov:
+
+    python -m pytest cloudformation\tests -v
+
+Son exactamente tres casos:
+1. test_01_no_secretos_expuestos.py: busca secretos expuestos y comprueba
+   restricciones de acceso a secretos.
+2. test_02_red_y_security_groups.py: comprueba puertos, origen de Django,
+   SSH y reglas de entrada/salida.
+3. test_03_cifrado_y_transporte.py: comprueba cifrado EBS, IMDSv2 y HTTPS.
+
+
+8. Ejecutar todo junto
+----------------------
+
+El siguiente script renderiza el template, ejecuta cfn-lint, los tres tests,
+Trivy y Checkov:
+
+    .\cloudformation\scripts\validate.ps1
+
+La misma validacion se ejecuta automaticamente al iniciar el despliegue con
+deploy.ps1. No uses deploy.ps1 si solo deseas mostrar los escaneos: ese script
+continua con la creacion de un change set de AWS.
+
+
+9. Limpiar el archivo temporal
+------------------------------
+
+Cuando hayas terminado:
+
+    Remove-Item -LiteralPath $template -Force
+
+
+Como explicar los resultados en la defensa
+-------------------------------------------
+
+- "PASSED" significa que la herramienta no detecto el incumplimiento de esa
+  regla especifica; no demuestra que el sistema sea completamente seguro.
+- "FAILED", "HIGH" o "CRITICAL" son hallazgos para analizar y corregir o
+  justificar con una razon concreta del laboratorio.
+- Trivy y Checkov son los dos escaneres de seguridad IaC usados aqui.
+- cfn-lint revisa validez y forma del template; pytest corre las tres pruebas
+  especificas del proyecto.
+- Los hallazgos pueden variar segun las versiones de las herramientas y sus
+  politicas. Guarda o captura la salida de la terminal para la demostracion.
+- Ejecutar estos comandos no despliega nada; el despliegue es un paso separado
+  mediante cloudformation\scripts\deploy.ps1.

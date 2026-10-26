@@ -1,5 +1,9 @@
 # Control de asistencia: despliegue nuevo en AWS
 
+## Alternativa AWS CloudFormation
+
+La implementacion equivalente en CloudFormation, sus scripts de despliegue y sus tests de seguridad estan en [cloudformation/README.md](cloudformation/README.md). Se despliega como un stack independiente; revisa el change set y usa un `ProjectName` distinto antes de aplicarlo junto al stack Terraform.
+
 Dos EC2: Django/PostgreSQL en backend y Angular/Nginx en frontend.
 CloudFront ofrece HTTPS. Nginx publica Angular y reenvia /api al backend.
 Cada EC2 clona su proyecto desde GitHub durante el primer arranque:

@@ -1,0 +1,18 @@
+[
+  {
+    "ParameterKey": "ProjectName",
+    "ParameterValue": "asistencia-lab3-cfn"
+  },
+  {
+    "ParameterKey": "InstanceType",
+    "ParameterValue": "t3.small"
+  },
+  {
+    "ParameterKey": "SshCidr",
+    "ParameterValue": "18.206.107.24/29"
+  },
+  {
+    "ParameterKey": "AmiId",
+    "ParameterValue": "ami-02a9cdd4e98bc3c78"
+  }
+]
